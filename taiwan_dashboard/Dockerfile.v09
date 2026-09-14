@@ -1,0 +1,40 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app.py .
+COPY cache_store.py .
+COPY patch_chart.py .
+COPY patch_v04_backend.py .
+COPY patch_v04_frontend.py .
+COPY patch_v05_filters.py .
+COPY patch_v06_backend.py .
+COPY patch_v06_frontend.py .
+COPY patch_v07_cache.py .
+COPY patch_v07_fix.py .
+COPY patch_v07_frontend.py .
+COPY patch_v08_progress_backend.py .
+COPY patch_v08_progress_view.py .
+COPY patch_v08_progress_embed.py .
+COPY patch_v081_ui.py .
+COPY patch_v09_signal_quality.py .
+COPY patch_v09_frontend.py .
+RUN python patch_chart.py
+RUN python patch_v04_backend.py
+RUN python patch_v04_frontend.py
+RUN python patch_v05_filters.py
+RUN python patch_v06_backend.py
+RUN python patch_v06_frontend.py
+RUN python patch_v07_cache.py
+RUN python patch_v07_fix.py
+RUN python patch_v07_frontend.py
+RUN python patch_v08_progress_backend.py
+RUN python patch_v08_progress_view.py
+RUN python patch_v08_progress_embed.py
+RUN python patch_v081_ui.py
+RUN python patch_v09_signal_quality.py
+RUN python patch_v09_frontend.py
+RUN mkdir -p /app/data
+VOLUME ["/app/data"]
+EXPOSE 8890
+CMD ["uvicorn","app:app","--host","0.0.0.0","--port","8890"]
