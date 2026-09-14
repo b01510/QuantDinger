@@ -54,9 +54,11 @@ foreach ($name in @('quantdinger-taiwan','quantdinger-taiwan-dashboard')) {
     }
 }
 
-# Keep the SQLite database across container rebuilds.
-docker volume inspect $Volume *> $null
-if ($LASTEXITCODE -ne 0) {
+# Keep the SQLite database across container rebuilds. `docker volume ls` is safe when
+# the volume does not exist yet, unlike `docker volume inspect` under ErrorActionPreference=Stop.
+$volumeExists = docker volume ls --filter "name=^${Volume}$" --format '{{.Name}}'
+if ($volumeExists -ne $Volume) {
+    Write-Host "建立資料快取 Volume：$Volume"
     docker volume create $Volume | Out-Null
 }
 
@@ -71,7 +73,7 @@ docker run -d `
 Start-Sleep -Seconds 4
 
 $status = docker ps --filter "name=^${Container}$" --format '{{.Status}}'
-if (-not $status.StartsWith('Up')) {
+if (-not $status -or -not $status.StartsWith('Up')) {
     Write-Host '容器沒有正常啟動，以下是最後 80 行紀錄：' -ForegroundColor Yellow
     docker logs $Container --tail 80
     throw 'QuantDinger Taiwan v0.7 啟動失敗。'
