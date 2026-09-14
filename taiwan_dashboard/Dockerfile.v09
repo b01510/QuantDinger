@@ -19,6 +19,7 @@ COPY patch_v08_progress_embed.py .
 COPY patch_v081_ui.py .
 COPY patch_v09_signal_quality.py .
 COPY patch_v09_frontend.py .
+COPY patch_v091_freshness.py .
 RUN python patch_chart.py
 RUN python patch_v04_backend.py
 RUN python patch_v04_frontend.py
@@ -34,6 +35,7 @@ RUN python patch_v08_progress_embed.py
 RUN python patch_v081_ui.py
 RUN python patch_v09_signal_quality.py
 RUN python patch_v09_frontend.py
+RUN python patch_v091_freshness.py
 RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 EXPOSE 8890
