@@ -6,7 +6,7 @@ $Image = 'quantdinger-taiwan'
 $Container = 'quantdinger-taiwan'
 $Volume = 'quantdinger-taiwan-data'
 
-Write-Host 'QuantDinger Taiwan Edition v0.7 updater' -ForegroundColor Cyan
+Write-Host 'QuantDinger Taiwan Edition v0.8 updater' -ForegroundColor Cyan
 Write-Host "Install directory: $Target"
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
@@ -33,7 +33,10 @@ $Files = @(
     'patch_v07_cache.py',
     'patch_v07_fix.py',
     'patch_v07_frontend.py',
-    'Dockerfile.v07'
+    'patch_v08_progress_backend.py',
+    'patch_v08_progress_view.py',
+    'patch_v08_progress_embed.py',
+    'Dockerfile.v08'
 )
 
 Write-Host '下載最新版台股工作台...'
@@ -41,11 +44,10 @@ foreach ($file in $Files) {
     Invoke-WebRequest "$Base/$file" -OutFile (Join-Path $Target $file)
 }
 
-Write-Host '建立 v0.7 Docker image（第一次可能需要幾分鐘）...'
-docker build --no-cache -f (Join-Path $Target 'Dockerfile.v07') -t $Image $Target
+Write-Host '建立 v0.8 Docker image（第一次可能需要幾分鐘）...'
+docker build --no-cache -f (Join-Path $Target 'Dockerfile.v08') -t $Image $Target
 if ($LASTEXITCODE -ne 0) { throw 'Docker build 失敗。' }
 
-# Remove both current and legacy container names so port 8890 cannot remain occupied.
 foreach ($name in @('quantdinger-taiwan','quantdinger-taiwan-dashboard')) {
     $existing = docker ps -a --filter "name=^${name}$" --format '{{.Names}}'
     if ($existing -eq $name) {
@@ -54,15 +56,13 @@ foreach ($name in @('quantdinger-taiwan','quantdinger-taiwan-dashboard')) {
     }
 }
 
-# Keep the SQLite database across container rebuilds. `docker volume ls` is safe when
-# the volume does not exist yet, unlike `docker volume inspect` under ErrorActionPreference=Stop.
 $volumeExists = docker volume ls --filter "name=^${Volume}$" --format '{{.Name}}'
 if ($volumeExists -ne $Volume) {
     Write-Host "建立資料快取 Volume：$Volume"
     docker volume create $Volume | Out-Null
 }
 
-Write-Host '啟動台股版 v0.7...'
+Write-Host '啟動台股版 v0.8...'
 docker run -d `
   --name $Container `
   --restart unless-stopped `
@@ -76,13 +76,13 @@ $status = docker ps --filter "name=^${Container}$" --format '{{.Status}}'
 if (-not $status -or -not $status.StartsWith('Up')) {
     Write-Host '容器沒有正常啟動，以下是最後 80 行紀錄：' -ForegroundColor Yellow
     docker logs $Container --tail 80
-    throw 'QuantDinger Taiwan v0.7 啟動失敗。'
+    throw 'QuantDinger Taiwan v0.8 啟動失敗。'
 }
 
 Write-Host ''
 Write-Host '完成。' -ForegroundColor Green
 Write-Host '台股工作台：http://127.0.0.1:8890'
 Write-Host 'SQLite：Docker volume quantdinger-taiwan-data'
-Write-Host '第一次全市場掃描會建立快取；之後掃描會大量改讀本機 SQLite。'
+Write-Host '全市場掃描現在會顯示即時進度百分比、完成檔數與預估剩餘時間。'
 Write-Host ''
 Write-Host '快取統計：http://127.0.0.1:8890/api/cache/stats'
