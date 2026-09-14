@@ -143,8 +143,15 @@ def cache_info(symbol: str) -> dict:
                 "SELECT last_checked,last_source,last_error FROM cache_meta WHERE symbol=?",
                 (code,),
             ).fetchone()
+            sym = conn.execute(
+                "SELECT ticker,name,market FROM symbols WHERE symbol=?",
+                (code,),
+            ).fetchone()
     return {
         "symbol": code,
+        "ticker": sym[0] if sym else None,
+        "name": sym[1] if sym else None,
+        "market": sym[2] if sym else None,
         "rows": int((stat or [0])[0] or 0),
         "first_date": (stat or [None, None])[1],
         "last_date": (stat or [None, None, None])[2],
