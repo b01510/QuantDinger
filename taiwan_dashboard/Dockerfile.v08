@@ -16,6 +16,7 @@ COPY patch_v07_frontend.py .
 COPY patch_v08_progress_backend.py .
 COPY patch_v08_progress_view.py .
 COPY patch_v08_progress_embed.py .
+COPY patch_v081_ui.py .
 RUN python patch_chart.py
 RUN python patch_v04_backend.py
 RUN python patch_v04_frontend.py
@@ -28,6 +29,7 @@ RUN python patch_v07_frontend.py
 RUN python patch_v08_progress_backend.py
 RUN python patch_v08_progress_view.py
 RUN python patch_v08_progress_embed.py
+RUN python patch_v081_ui.py
 RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 EXPOSE 8890
