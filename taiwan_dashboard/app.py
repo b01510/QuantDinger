@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
 from typing import Any
 
 import pandas as pd
@@ -12,7 +11,7 @@ import yfinance as yf
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
-app = FastAPI(title="QuantDinger Taiwan Edition", version="0.1.0")
+app = FastAPI(title="QuantDinger Taiwan Edition", version="0.2.0")
 
 POPULAR = {
     "2330": "台積電", "2317": "鴻海", "2454": "聯發科", "2382": "廣達", "3231": "緯創",
@@ -26,10 +25,71 @@ POPULAR = {
 }
 
 _resolve_cache: dict[str, tuple[float, str]] = {}
+_YH = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/152 Safari/537.36",
+    "Accept": "application/json,text/plain,*/*",
+    "Referer": "https://finance.yahoo.com/",
+}
 
 
 def _clean_symbol(symbol: str) -> str:
     return str(symbol or "").strip().upper()
+
+
+def _period_for_yahoo(period: str) -> str:
+    p = str(period or "1y").lower()
+    return {
+        "5d": "5d", "1mo": "1mo", "3mo": "3mo", "6mo": "6mo",
+        "9mo": "1y", "1y": "1y", "2y": "2y", "5y": "5y", "10y": "10y",
+        "ytd": "ytd", "max": "max",
+    }.get(p, "1y")
+
+
+def _yahoo_chart(candidate: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{candidate}"
+    r = requests.get(
+        url,
+        params={"range": _period_for_yahoo(period), "interval": interval, "includePrePost": "false", "events": "div,splits"},
+        headers=_YH,
+        timeout=12,
+    )
+    if not r.ok:
+        return pd.DataFrame()
+    payload = r.json() or {}
+    result = ((payload.get("chart") or {}).get("result") or [])
+    if not result:
+        return pd.DataFrame()
+    item = result[0] or {}
+    ts = item.get("timestamp") or []
+    quote = (((item.get("indicators") or {}).get("quote") or [{}])[0]) or {}
+    if not ts:
+        return pd.DataFrame()
+    n = len(ts)
+    def col(name: str):
+        values = quote.get(name) or []
+        return list(values) + [None] * max(0, n - len(values))
+    df = pd.DataFrame({
+        "Open": col("open")[:n],
+        "High": col("high")[:n],
+        "Low": col("low")[:n],
+        "Close": col("close")[:n],
+        "Volume": col("volume")[:n],
+    }, index=pd.to_datetime(ts, unit="s", utc=True).tz_convert("Asia/Taipei"))
+    return df.dropna(subset=["Open", "High", "Low", "Close"])
+
+
+def _candidate_works(candidate: str) -> bool:
+    try:
+        df = _yahoo_chart(candidate, period="5d")
+        if not df.empty:
+            return True
+    except Exception:
+        pass
+    try:
+        hist = yf.Ticker(candidate).history(period="5d", interval="1d", auto_adjust=False)
+        return hist is not None and not hist.empty
+    except Exception:
+        return False
 
 
 def resolve_ticker(symbol: str) -> str:
@@ -42,24 +102,31 @@ def resolve_ticker(symbol: str) -> str:
     if cached and cached[0] > time.time():
         return cached[1]
     for candidate in (f"{s}.TW", f"{s}.TWO"):
-        try:
-            hist = yf.Ticker(candidate).history(period="5d", interval="1d", auto_adjust=False)
-            if hist is not None and not hist.empty:
-                _resolve_cache[s] = (time.time() + 21600, candidate)
-                return candidate
-        except Exception:
-            pass
+        if _candidate_works(candidate):
+            _resolve_cache[s] = (time.time() + 21600, candidate)
+            return candidate
     raise ValueError(f"找不到台股代碼 {s}")
 
 
 def _download(symbol: str, period: str = "1y", interval: str = "1d") -> tuple[str, pd.DataFrame]:
     ticker = resolve_ticker(symbol)
-    df = yf.download(ticker, period=period, interval=interval, auto_adjust=False, progress=False, threads=False)
+    df = pd.DataFrame()
+    try:
+        df = _yahoo_chart(ticker, period=period, interval=interval)
+    except Exception:
+        df = pd.DataFrame()
+    if df.empty:
+        try:
+            df = yf.download(ticker, period=period, interval=interval, auto_adjust=False, progress=False, threads=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = [c[0] for c in df.columns]
+        except Exception:
+            df = pd.DataFrame()
     if df is None or df.empty:
         raise ValueError(f"{symbol} 暫時沒有行情資料")
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [c[0] for c in df.columns]
     df = df.dropna(subset=["Open", "High", "Low", "Close"])
+    if df.empty:
+        raise ValueError(f"{symbol} 暫時沒有行情資料")
     return ticker, df
 
 
@@ -79,10 +146,11 @@ def history_payload(symbol: str, period: str = "1y") -> dict:
         df[f"MA{n}"] = df["Close"].rolling(n).mean()
     rows = []
     for idx, row in df.tail(260).iterrows():
+        vol = row.get("Volume", 0)
         rows.append({
             "date": pd.Timestamp(idx).strftime("%Y-%m-%d"),
             "open": _f(row["Open"]), "high": _f(row["High"]), "low": _f(row["Low"]),
-            "close": _f(row["Close"]), "volume": int(float(row.get("Volume", 0) or 0)),
+            "close": _f(row["Close"]), "volume": int(float(vol)) if pd.notna(vol) else 0,
             "ma5": _f(row.get("MA5")), "ma10": _f(row.get("MA10")),
             "ma20": _f(row.get("MA20")), "ma60": _f(row.get("MA60")),
         })
@@ -91,12 +159,13 @@ def history_payload(symbol: str, period: str = "1y") -> dict:
     change = float(latest["Close"] - prev["Close"])
     change_pct = change / float(prev["Close"]) * 100 if float(prev["Close"]) else 0
     code = _clean_symbol(symbol).replace(".TW", "").replace(".TWO", "")
+    latest_vol = latest.get("Volume", 0)
     return {
         "symbol": code,
         "name": POPULAR.get(code, code),
         "ticker": ticker,
         "last": _f(latest["Close"]), "change": _f(change), "change_pct": _f(change_pct),
-        "volume": int(float(latest.get("Volume", 0) or 0)),
+        "volume": int(float(latest_vol)) if pd.notna(latest_vol) else 0,
         "rows": rows,
     }
 
@@ -157,7 +226,7 @@ def home():
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "QuantDinger Taiwan Edition"}
+    return {"ok": True, "service": "QuantDinger Taiwan Edition", "version": "0.2.0"}
 
 
 @app.get("/api/search")
@@ -174,8 +243,8 @@ def search(q: str = Query(..., min_length=1, max_length=40)):
     try:
         r = requests.get(
             "https://query2.finance.yahoo.com/v1/finance/search",
-            params={"q": raw, "quotesCount": 15, "newsCount": 0}, timeout=5,
-            headers={"User-Agent": "Mozilla/5.0"},
+            params={"q": raw, "quotesCount": 15, "newsCount": 0}, timeout=7,
+            headers=_YH,
         )
         if r.ok:
             seen = {x["symbol"] for x in local}
@@ -208,7 +277,7 @@ def history(symbol: str, period: str = "1y"):
 def scanner():
     results = []
     universe = list(POPULAR.keys())
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         futures = {pool.submit(scan_one, code): code for code in universe}
         for f in as_completed(futures):
             row = f.result()
@@ -229,7 +298,7 @@ INDEX_HTML = r'''<!doctype html>
 <style>
 :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#0b1020;color:#e8edf7;font-family:Inter,"Noto Sans TC",system-ui,sans-serif}.wrap{max-width:1500px;margin:auto;padding:22px}.top{display:flex;gap:14px;align-items:center;flex-wrap:wrap}.brand{font-size:24px;font-weight:800}.tag{background:#17335f;color:#9fd0ff;padding:5px 10px;border-radius:999px;font-size:12px}.searchbox{position:relative;flex:1;min-width:300px}.searchbox input{width:100%;background:#121a2f;border:1px solid #2a3858;border-radius:12px;padding:13px 15px;color:white;font-size:16px}.results{position:absolute;z-index:10;left:0;right:0;background:#121a2f;border:1px solid #2a3858;border-radius:10px;margin-top:4px;overflow:hidden}.result{padding:10px 12px;cursor:pointer}.result:hover{background:#1b2744}.grid{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-top:18px}.card{background:#10182a;border:1px solid #202c47;border-radius:16px;padding:16px}.quote{display:flex;gap:16px;align-items:baseline}.price{font-size:36px;font-weight:800}.muted{color:#8d9ab3}.up{color:#ff5b6e}.down{color:#43d18d}button{border:0;border-radius:10px;padding:10px 14px;background:#2d6cdf;color:white;cursor:pointer;font-weight:700}button.secondary{background:#24304a}table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:10px 8px;border-bottom:1px solid #202c47;text-align:right}th:first-child,td:first-child{text-align:left}tr.click{cursor:pointer}tr.click:hover{background:#16223a}.pill{padding:3px 7px;border-radius:999px;background:#1d3b2d;color:#72e6a6;font-size:12px}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}.defs{font-size:12px;line-height:1.7;color:#9aa7be}.loading{opacity:.65}@media(max-width:980px){.grid{grid-template-columns:1fr}.wrap{padding:12px}}
 </style></head><body><div class="wrap">
-<div class="top"><div class="brand">QuantDinger Taiwan Edition</div><div class="tag">台股研究版 v0.1</div><div class="searchbox"><input id="q" placeholder="搜尋 2330、台積電、0050…" autocomplete="off"><div id="results" class="results" style="display:none"></div></div></div>
+<div class="top"><div class="brand">QuantDinger Taiwan Edition</div><div class="tag">台股研究版 v0.2</div><div class="searchbox"><input id="q" placeholder="搜尋 2330、台積電、0050…" autocomplete="off"><div id="results" class="results" style="display:none"></div></div></div>
 <div class="grid"><div class="card"><div class="quote"><div><div id="title" style="font-size:20px;font-weight:700">2330 台積電</div><div class="muted" id="ticker">2330.TW</div></div><div id="price" class="price">—</div><div id="change">—</div></div><div id="chart" style="height:600px"></div></div>
 <div class="card"><div class="toolbar"><div><b>爆量回測 20MA 掃描器</b><div class="muted" style="font-size:12px">先掃常用大型股/熱門ETF</div></div><button id="scanBtn">重新掃描</button></div><div id="scanStatus" class="muted">尚未掃描</div><div style="overflow:auto;max-height:610px"><table><thead><tr><th>股票</th><th>現價</th><th>距20MA</th><th>量比</th><th>分數</th></tr></thead><tbody id="scanRows"></tbody></table></div><div id="defs" class="defs" style="margin-top:12px"></div></div></div>
 </div><script>
