@@ -6,7 +6,7 @@ $Image = 'quantdinger-taiwan'
 $Container = 'quantdinger-taiwan'
 $Volume = 'quantdinger-taiwan-data'
 
-Write-Host 'QuantDinger Taiwan Edition v0.8 updater' -ForegroundColor Cyan
+Write-Host 'QuantDinger Taiwan Edition v0.8.1 updater' -ForegroundColor Cyan
 Write-Host "Install directory: $Target"
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
@@ -36,6 +36,7 @@ $Files = @(
     'patch_v08_progress_backend.py',
     'patch_v08_progress_view.py',
     'patch_v08_progress_embed.py',
+    'patch_v081_ui.py',
     'Dockerfile.v08'
 )
 
@@ -44,7 +45,7 @@ foreach ($file in $Files) {
     Invoke-WebRequest "$Base/$file" -OutFile (Join-Path $Target $file)
 }
 
-Write-Host '建立 v0.8 Docker image（第一次可能需要幾分鐘）...'
+Write-Host '建立 v0.8.1 Docker image（第一次可能需要幾分鐘）...'
 docker build --no-cache -f (Join-Path $Target 'Dockerfile.v08') -t $Image $Target
 if ($LASTEXITCODE -ne 0) { throw 'Docker build 失敗。' }
 
@@ -62,7 +63,7 @@ if ($volumeExists -ne $Volume) {
     docker volume create $Volume | Out-Null
 }
 
-Write-Host '啟動台股版 v0.8...'
+Write-Host '啟動台股版 v0.8.1...'
 docker run -d `
   --name $Container `
   --restart unless-stopped `
@@ -76,13 +77,13 @@ $status = docker ps --filter "name=^${Container}$" --format '{{.Status}}'
 if (-not $status -or -not $status.StartsWith('Up')) {
     Write-Host '容器沒有正常啟動，以下是最後 80 行紀錄：' -ForegroundColor Yellow
     docker logs $Container --tail 80
-    throw 'QuantDinger Taiwan v0.8 啟動失敗。'
+    throw 'QuantDinger Taiwan v0.8.1 啟動失敗。'
 }
 
 Write-Host ''
 Write-Host '完成。' -ForegroundColor Green
 Write-Host '台股工作台：http://127.0.0.1:8890'
 Write-Host 'SQLite：Docker volume quantdinger-taiwan-data'
-Write-Host '全市場掃描現在會顯示即時進度百分比、完成檔數與預估剩餘時間。'
+Write-Host '掃描結果已改成顯示股票中文名稱，並放大主要文字。'
 Write-Host ''
 Write-Host '快取統計：http://127.0.0.1:8890/api/cache/stats'
