@@ -1,0 +1,30 @@
+services:
+  backend:
+    build:
+      context: ./taiwan_patch
+    image: quantdinger-backend-tw:local
+
+  migration:
+    build:
+      context: ./taiwan_patch
+    image: quantdinger-backend-tw:local
+
+  celery-worker:
+    build:
+      context: ./taiwan_patch
+    image: quantdinger-backend-tw:local
+
+  celery-beat:
+    build:
+      context: ./taiwan_patch
+    image: quantdinger-backend-tw:local
+
+  scheduler-worker:
+    build:
+      context: ./taiwan_patch
+    image: quantdinger-backend-tw:local
+
+  trading-worker:
+    build:
+      context: ./taiwan_patch
+    image: quantdinger-backend-tw:local
